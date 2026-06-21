@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Учёт маркеров для раскрашивания</title>
+    <meta name="description" content="Приложение для учёта маркеров для раскрашивания: инвентарь, поиск замен, статистика">
+    <meta name="theme-color" content="#6c63ff">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Маркеры">
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" href="logo.png" type="image/png">
+    <link rel="apple-touch-icon" href="logo.png">
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <div class="header-row">
+            <h1>🎨 Учёт маркеров для раскрашивания</h1>
+            <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()" title="Переключить тему">🌙</button>
+        </div>
+        
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('inventory', event)">📦 Мои маркеры</button>
+            <button class="tab" onclick="switchTab('search', event)">🔍 Поиск замен</button>
+            <button class="tab" onclick="switchTab('add', event)">➕ Добавить/Расход</button>
+            <button class="tab" onclick="switchTab('history', event)">📋 История</button>
+            <button class="tab" onclick="switchTab('stats', event)">📊 Статистика</button>
+            <button class="tab" onclick="switchTab('wishlist', event)">🛒 Список покупок <span id="wishlist-badge" class="tab-badge" style="display:none;">0</span></button>
+        </div>
+
+        <!-- Вкладка: Мои маркеры -->
+        <div id="inventory" class="tab-content active">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <h3 id="stat-in-stock">0</h3>
+                    <p>В наличии</p>
+                </div>
+                <div class="stat-card">
+                    <h3 id="stat-unique-colors">0</h3>
+                    <p>Уникальных цветов</p>
+                </div>
+                <div class="stat-card">
+                    <h3 id="stat-has-replacements">0</h3>
+                    <p>С заменами</p>
+                </div>
+                <div class="stat-card">
+                    <h3 id="stat-out-of-stock">0</h3>
+                    <p>Закончились</p>
+                </div>
+            </div>
+
+            <div class="filter-row">
+                <select id="filter-brand" onchange="renderInventory()">
+                    <option value="all">Все бренды</option>
+                </select>
+                <select id="filter-status" onchange="renderInventory()">
+                    <option value="all">Все статусы</option>
+                    <option value="available">В наличии</option>
+                    <option value="available_replacement">В наличии + замена</option>
+                    <option value="has_replacement">Есть замена</option>
+                    <option value="empty">Закончились</option>
+                </select>
+                <select id="filter-highlight" onchange="renderInventory()">
+                    <option value="all">Все маркеры</option>
+                    <option value="top_stock">🔥 Топ по наличию (≥3 шт.)</option>
+                    <option value="frequently_empty">⚠️ Часто заканчиваются</option>
+                </select>
+                <input type="text" id="filter-search" placeholder="Поиск по коду цвета..." oninput="debouncedRenderInventory()">
+                <button class="btn-warning" onclick="resetData()" style="white-space: nowrap;" title="Сбросить все данные">🔄 Сброс</button>
+                <button class="btn-info" onclick="exportData()" style="white-space: nowrap;" title="Сохранить все данные в JSON-файл">💾</button>
+                <button class="btn-info" onclick="exportDataCSV()" style="white-space: nowrap;" title="Экспортировать инвентарь в CSV для Excel">📊</button>
+                <button class="btn-info" onclick="document.getElementById('import-file').click()" style="white-space: nowrap;" title="Загрузить данные из JSON-файла">⬆️</button>
+                <input type="file" id="import-file" accept=".json" style="display: none;" onchange="importData(event)">
+            </div>
+
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Бренд</th>
+                            <th>Код цвета</th>
+                            <th>Аналоги из других фирм</th>
+                            <th>Своих шт.</th>
+                            <th>Аналоги шт.</th>
+                            <th>Всего (цвет)</th>
+                            <th>Статус</th>
+                            <th>Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody id="inventory-body">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Вкладка: Поиск замен -->
+        <div id="search" class="tab-content">
+            <div class="section">
+                <h2>Найти замену цвета</h2>
+                <p class="text-muted" style="margin-bottom: 16px;">
+                    Если у вас закончился какой-то цвет — здесь можно найти замену из другого бренда.
+                </p>
+                <div class="search-box">
+                    <select id="search-brand">
+                    </select>
+                    <input type="text" id="search-code" placeholder="Введите код цвета..." onkeydown="if(event.key==='Enter')searchReplacement()">
+                    <button onclick="searchReplacement()">Найти замену</button>
+                </div>
+            </div>
+
+            <div id="search-results">
+                <div class="empty-state">
+                    <p>Введите код цвета для поиска замен</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Вкладка: Добавить/Расход -->
+        <div id="add" class="tab-content">
+            <!-- 1. Покупка -->
+            <div class="section">
+                <h2>Добавить маркеры (покупка)</h2>
+                <div class="inline-form">
+                    <div class="form-group">
+                        <label>Бренд</label>
+                        <select id="add-brand">
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Код цвета</label>
+                        <input type="text" id="add-code" placeholder="Например: 600 или BL210" list="add-code-list" autocomplete="off">
+                        <datalist id="add-code-list"></datalist>
+                    </div>
+                    <div class="form-group">
+                        <label>Количество</label>
+                        <input type="number" id="add-quantity" min="1" value="1">
+                    </div>
+                    <button onclick="addMarkers()">Добавить</button>
+                </div>
+            </div>
+
+            <!-- 2. Расход -->
+            <div class="section">
+                <h2>Отметить расход</h2>
+                <div class="inline-form">
+                    <div class="form-group">
+                        <label>Бренд</label>
+                        <select id="use-brand">
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Код цвета</label>
+                        <input type="text" id="use-code" placeholder="Например: 600 или BL210" list="use-code-list" autocomplete="off">
+                        <datalist id="use-code-list"></datalist>
+                    </div>
+                    <div class="form-group">
+                        <label>Количество</label>
+                        <input type="number" id="use-quantity" min="1" value="1">
+                    </div>
+                    <button class="btn-danger" onclick="useMarkers()">Списать</button>
+                </div>
+            </div>
+
+            <!-- 3. Новый бренд -->
+            <div class="section">
+                <h2>🏷️ Добавить новый бренд</h2>
+                <p class="text-muted" style="margin-bottom: 16px;">
+                    Если вашей фирмы маркеров нет в списке — добавьте её здесь. Она запомнится для будущего использования.
+                </p>
+                <div class="inline-form">
+                    <div class="form-group">
+                        <label>Название бренда</label>
+                        <input type="text" id="new-brand-name" placeholder="Например: Copic, Touch, Ohuhu...">
+                    </div>
+                    <div class="form-group">
+                        <label>Код цвета</label>
+                        <input type="text" id="new-brand-color-code" placeholder="Например: R01, 120, RV-Red...">
+                    </div>
+                    <button class="btn-success" onclick="addCustomBrand()">Добавить бренд</button>
+                </div>
+                <div id="custom-brands-list" style="margin-top: 16px;"></div>
+            </div>
+
+            <!-- 4. Соответствие (аналоги) -->
+            <div class="section">
+                <h2>🔗 Добавить соответствие (аналоги цветов)</h2>
+                <p class="text-muted" style="margin-bottom: 16px;">
+                    Укажите, какие цвета из разных фирм являются аналогами друг друга.
+                </p>
+                <div id="mapping-rows">
+                    <div class="mapping-row" data-index="0">
+                        <select class="mapping-brand-0">
+                        </select>
+                        <input type="text" class="mapping-code-0" placeholder="Код цвета" style="width: 120px;">
+                        <span class="text-primary-accent" style="font-weight: bold;">⟷</span>
+                        <select class="mapping-brand-1">
+                        </select>
+                        <input type="text" class="mapping-code-1" placeholder="Код цвета" style="width: 120px;">
+                    </div>
+                </div>
+                <div style="margin-top: 12px; display: flex; gap: 8px;">
+                    <button class="btn-add-row" onclick="addMappingRow()">+ Ещё одна пара</button>
+                    <button class="btn-success" onclick="saveMapping()">💾 Сохранить соответствие</button>
+                </div>
+                <div id="existing-mappings" class="existing-mappings"></div>
+            </div>
+
+            <!-- 5. Набор -->
+            <div class="section">
+                <h2>Быстрое добавление набора</h2>
+                <div class="inline-form">
+                    <div class="form-group">
+                        <label>Бренд</label>
+                        <select id="bulk-brand" onchange="onBulkBrandChange()">
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Набор</label>
+                        <select id="bulk-set">
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Количество каждого цвета</label>
+                        <input type="number" id="bulk-quantity" min="1" value="1">
+                    </div>
+                    <button class="btn-success" onclick="addBulkSet()">Добавить набор</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Вкладка: История -->
+        <div id="history" class="tab-content">
+            <div class="section">
+                <h2>История операций</h2>
+                <div style="margin-bottom: 12px;">
+                    <button class="btn-info" onclick="exportHistoryCSV()" style="white-space: nowrap;">📊 Экспорт истории CSV</button>
+                </div>
+                <div id="history-list">
+                </div>
+            </div>
+        </div>
+
+        <!-- Вкладка: Статистика -->
+        <div id="stats" class="tab-content">
+            <div class="section">
+                <h2>Статистика использования</h2>
+                <div id="stats-content">
+                </div>
+            </div>
+        </div>
+
+        <!-- Вкладка: Список покупок -->
+        <div id="wishlist" class="tab-content">
+            <div class="section">
+                <h2>🛒 Список покупок</h2>
+                <p class="text-muted" style="margin-bottom: 16px;">
+                    Автоматически формируется из маркеров с количеством 0. Сгруппировано по брендам.
+                </p>
+                <div class="filter-row" style="margin-bottom: 12px;">
+                    <select id="wishlist-filter-status" onchange="renderWishlist()">
+                        <option value="all">Все статусы</option>
+                        <option value="critical">🔴 Критический</option>
+                        <option value="can_update">🟡 Можно обновить</option>
+                        <option value="consider">🟢 Рассмотреть покупку</option>
+                    </select>
+                    <select id="wishlist-filter-brand" onchange="renderWishlist()">
+                        <option value="all">Все бренды</option>
+                    </select>
+                    <button class="btn-info" onclick="exportWishlistCSV()" style="white-space: nowrap;">📥 Экспорт CSV</button>
+                </div>
+                <div id="wishlist-stats" style="margin-bottom: 16px;"></div>
+                <div id="wishlist-body"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно -->
+    <div id="modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modal-title">Информация</h3>
+                <button class="close-btn" onclick="closeModal()">×</button>
+            </div>
+            <div id="modal-body">
+            </div>
+        </div>
+    </div>
+
+    <script src="data.js"></script>
+    <script src="color-mapping.js"></script>
+    <script src="inventory.js"></script>
+    <script src="app.js"></script>
+    <script src="features.js"></script>
+</body>
+</html>

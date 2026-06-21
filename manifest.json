@@ -1,0 +1,20 @@
+{
+  "name": "Учёт маркеров для раскрашивания",
+  "short_name": "Маркеры",
+  "description": "Приложение для учёта маркеров для раскрашивания: инвентарь, поиск замен, статистика",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#1a1a2e",
+  "theme_color": "#6c63ff",
+  "orientation": "any",
+  "icons": [
+  {
+    "src": "logo.png",
+    "sizes": "512x512",
+    "type": "image/png",
+    "purpose": "any maskable"
+  }
+],
+  "categories": ["utilities", "productivity"],
+  "lang": "ru"
+}
