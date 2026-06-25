@@ -1,50 +1,228 @@
 // ==================== FEATURES.JS ====================
 // Новые функции: Wishlist, CSV-экспорт, Автобэкап, Autocomplete, Графики
 
-// ==================== 1. СПИСОК ПОКУПОК (WISHLIST) ====================
+// ==================== 1. СПИСОК ПОКУПОК (WISHLIST) — ПО ЦВЕТАМ ====================
 
-// Определить статус маркера для списка покупок
-function getWishlistItemStatus(item) {
-    const analogues = getAnalogues(item.brand, item.code);
-    const analoguesQty = analogues.reduce((sum, a) => sum + (a.quantity || 0), 0);
-    const timesEmptied = item.timesEmptied || 0;
-    
-    // Критический: маркер=0, аналоги=0, заканчивался >= 2 раз
-    if (analoguesQty === 0 && timesEmptied >= 2) {
-        return 'critical';
-    }
-    
-    // Можно обновить: маркер=0, аналоги>0, заканчивался >= 1 раз
-    if (analoguesQty > 0 && timesEmptied >= 1) {
-        return 'can_update';
-    }
-    
-    // Рассмотреть покупку: маркер=0, аналоги>0, не заканчивался
-    if (analoguesQty > 0 && timesEmptied === 0) {
-        return 'consider';
-    }
-    
-    // Критический (запасной): маркер=0, аналоги=0, не заканчивался
-    return 'critical';
+// Получить метку приоритета по сумме timesEmptied
+// 0 → не показывать; 1 → ⚪ Минимальный; 2 → 🟡 Средний; 3+ → 🔴 Срочно
+function getPriorityLabel(sumTimesEmptied) {
+    if (sumTimesEmptied >= 3) return { score: sumTimesEmptied, icon: '🔴', text: 'Срочно',       class: 'priority-urgent' };
+    if (sumTimesEmptied >= 2) return { score: sumTimesEmptied, icon: '🟡', text: 'Средний',      class: 'priority-medium' };
+    if (sumTimesEmptied >= 1) return { score: sumTimesEmptied, icon: '⚪', text: 'Минимальный',  class: 'priority-minimal' };
+    return null; // не показывать
 }
 
-function getWishlistStatusInfo(status) {
-    switch (status) {
-        case 'critical':
-            return { icon: '🔴', text: 'Критический', class: 'wishlist-status-critical' };
-        case 'can_update':
-            return { icon: '🟡', text: 'Можно обновить', class: 'wishlist-status-can-update' };
-        case 'consider':
-            return { icon: '🟢', text: 'Рассмотреть покупку', class: 'wishlist-status-consider' };
-        default:
-            return { icon: '⚪', text: 'Неизвестно', class: '' };
+// Построить цветные группы из инвентаря
+// Возвращает { needToBuy: [...], hasAlternative: [...] }
+function buildColorGroups() {
+    const emptyItems = Object.values(inventory).filter(i => i.quantity === 0);
+    const processedKeys = new Set(); // чтобы не дублировать цвета
+    const needToBuy = [];
+    const hasAlternative = [];
+    
+    for (const item of emptyItems) {
+        const key = `${item.brand}_${item.code}`;
+        const entry = REVERSE_INDEX[key];
+        
+        if (!entry) {
+            // Маркер без маппинга — отдельный "цвет"
+            const soloKey = `solo_${key}`;
+            if (processedKeys.has(soloKey)) continue;
+            processedKeys.add(soloKey);
+            
+            const sumTimesEmptied = item.timesEmptied || 0;
+            const priority = getPriorityLabel(sumTimesEmptied);
+            
+            // Без маппинга — нет альтернатив, показываем если sumTimesEmptied >= 1
+            if (priority) {
+                needToBuy.push({
+                    universalCode: soloKey,
+                    displayName: `${item.brand} ${item.code}`,
+                    brands: [{
+                        brand: item.brand,
+                        code: item.code,
+                        quantity: 0,
+                        timesEmptied: item.timesEmptied || 0
+                    }],
+                    totalQty: 0,
+                    sumTimesEmptied,
+                    priority,
+                    hasMapping: false,
+                    section: 'needToBuy'
+                });
+            }
+            continue;
+        }
+        
+        const uCode = entry.universalCode;
+        if (processedKeys.has(uCode)) continue;
+        processedKeys.add(uCode);
+        
+        // Собираем ВСЕ бренды для этого цвета (включая те, где quantity > 0)
+        const allBrandsForColor = getAllBrandsForEntry(entry);
+        const brands = allBrandsForColor.map(b => ({
+            brand: b.name,
+            code: b.code,
+            quantity: inventory[`${b.name}_${b.code}`]?.quantity || 0,
+            timesEmptied: inventory[`${b.name}_${b.code}`]?.timesEmptied || 0
+        }));
+        
+        const totalQty = brands.reduce((s, b) => s + b.quantity, 0);
+        const sumTimesEmptied = brands.reduce((s, b) => s + b.timesEmptied, 0);
+        const hasBrandWithStock = brands.some(b => b.quantity > 0);
+        
+        const group = {
+            universalCode: uCode,
+            displayName: `#${uCode}`,
+            brands,
+            totalQty,
+            sumTimesEmptied,
+            hasMapping: true
+        };
+        
+        if (hasBrandWithStock) {
+            // Есть альтернатива — хотя бы один бренд в наличии
+            group.section = 'hasAlternative';
+            hasAlternative.push(group);
+        } else {
+            // Все бренды = 0 — нужно купить
+            const priority = getPriorityLabel(sumTimesEmptied);
+            if (priority) {
+                group.priority = priority;
+                group.section = 'needToBuy';
+                needToBuy.push(group);
+            }
+            // sumTimesEmptied === 0 → не показываем вообще
+        }
     }
+    
+    // Сортируем по приоритету (убывание) внутри каждой секции
+    needToBuy.sort((a, b) => b.priority.score - a.priority.score);
+    hasAlternative.sort((a, b) => b.sumTimesEmptied - a.sumTimesEmptied);
+    
+    return { needToBuy, hasAlternative };
+}
+
+// Получить все цветные группы (для статистики, до фильтрации)
+function getAllColorGroups() {
+    const { needToBuy, hasAlternative } = buildColorGroups();
+    return [...needToBuy, ...hasAlternative];
+}
+
+// Debounced-версия renderWishlist для поиска
+const debouncedRenderWishlist = debounce(() => renderWishlist(), 300);
+
+// Переключить свёрнутость группы
+function toggleWishlistGroup(groupIndex) {
+    const rows = document.querySelectorAll(`.wishlist-child-${groupIndex}`);
+    const header = document.querySelector(`.wishlist-group-header-${groupIndex}`);
+    const arrow = header?.querySelector('.wishlist-toggle-arrow');
+    const isCollapsed = header?.getAttribute('data-collapsed') === 'true';
+    
+    rows.forEach(row => {
+        row.style.display = isCollapsed ? '' : 'none';
+    });
+    
+    if (header) {
+        header.setAttribute('data-collapsed', isCollapsed ? 'false' : 'true');
+    }
+    if (arrow) {
+        arrow.textContent = isCollapsed ? '▼' : '▶';
+    }
+}
+
+// Рендер одной секции (таблица со сворачиваемыми группами)
+function renderWishlistSection(groups, sectionId, sectionTitle, sectionIcon, giOffset) {
+    if (groups.length === 0) return '';
+    
+    let html = `
+        <div class="wishlist-section wishlist-section-${sectionId}">
+            <h3 class="wishlist-section-title">${sectionIcon} ${sectionTitle} (${groups.length} цвет${_pluralEnd(groups.length)})</h3>
+            <div class="table-wrapper">
+                <table class="wishlist-table-main">
+                    <thead>
+                        <tr>
+                            <th style="width: 40px;"></th>
+                            <th>Приоритет</th>
+                            <th>Бренд</th>
+                            <th>Код</th>
+                            <th>Своих</th>
+                            <th>Использован (сумма)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+    `;
+    
+    groups.forEach((group, i) => {
+        const gi = giOffset + i;
+        const priorityInfo = group.priority;
+        const totalText = group.totalQty > 0 ? `✅ ${group.totalQty} шт.` : '❌ Нет';
+        
+        // Строка-заголовок группы (кликабельная)
+        const priorityBadge = priorityInfo
+            ? `<span class="priority-badge ${priorityInfo.class}">${priorityInfo.icon} ${priorityInfo.text}</span>`
+            : `<span class="priority-badge priority-alternative">ℹ️ Есть альтернатива</span>`;
+        
+        html += `
+            <tr class="wishlist-group-header wishlist-group-header-${gi}"
+                data-collapsed="false"
+                onclick="toggleWishlistGroup(${gi})">
+                <td class="wishlist-toggle-cell"><span class="wishlist-toggle-arrow">▼</span></td>
+                <td>${priorityBadge}</td>
+                <td colspan="2" class="text-muted">${group.brands.length} бренд(ов)</td>
+                <td>${totalText}</td>
+                <td class="text-muted">${group.sumTimesEmptied > 0 ? group.sumTimesEmptied + ' раз' : '—'}</td>
+            </tr>
+        `;
+        
+        // Строки-дети (бренды внутри группы)
+        group.brands.forEach(b => {
+            const isEmpty = b.quantity === 0;
+            const rowClass = isEmpty ? 'wishlist-row-empty' : 'wishlist-row-available';
+            const statusIcon = isEmpty ? '❌' : '✅';
+            const statusText = isEmpty ? 'Нет' : `${b.quantity} шт.`;
+            const freqBar = b.timesEmptied > 0
+                ? `<span class="freq-indicator">${'█'.repeat(Math.min(b.timesEmptied, 5))}</span> ${b.timesEmptied} раз`
+                : '<span class="text-disabled">—</span>';
+            
+            html += `
+                <tr class="${rowClass} wishlist-child-${gi}">
+                    <td></td>
+                    <td></td>
+                    <td>${getBadgeHtml(b.brand)}</td>
+                    <td><strong>${escapeHtml(b.code)}</strong></td>
+                    <td>${statusIcon} ${statusText}</td>
+                    <td>${freqBar}</td>
+                </tr>
+            `;
+        });
+    });
+    
+    html += `
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    `;
+    
+    return html;
+}
+
+// Склонение слова "цвет"
+function _pluralEnd(n) {
+    const mod10 = n % 10;
+    const mod100 = n % 100;
+    if (mod100 >= 11 && mod100 <= 19) return 'ов';
+    if (mod10 === 1) return '';
+    if (mod10 >= 2 && mod10 <= 4) return 'а';
+    return 'ов';
 }
 
 function renderWishlist() {
     const container = document.getElementById('wishlist-body');
-    const filterStatus = document.getElementById('wishlist-filter-status').value;
+    const filterPriority = document.getElementById('wishlist-filter-status').value;
     const filterBrand = document.getElementById('wishlist-filter-brand').value;
+    const searchQuery = (document.getElementById('wishlist-search')?.value || '').trim().toUpperCase();
     
     // Обновить фильтр брендов
     const brandFilter = document.getElementById('wishlist-filter-brand');
@@ -59,138 +237,70 @@ function renderWishlist() {
     });
     brandFilter.value = currentBrandVal || 'all';
     
-    // Собрать все маркеры с quantity === 0
-    const items = Object.values(inventory).filter(item => item.quantity === 0);
+    // Построить все цветные группы
+    const { needToBuy, hasAlternative } = buildColorGroups();
     
-    // Обогатить данными
-    let enriched = items.map(item => {
-        const analogues = getAnalogues(item.brand, item.code);
-        const analoguesQty = analogues.reduce((sum, a) => sum + (a.quantity || 0), 0);
-        const status = getWishlistItemStatus(item);
-        return {
-            brand: item.brand,
-            code: item.code,
-            timesEmptied: item.timesEmptied || 0,
-            analogues,
-            analoguesQty,
-            status
-        };
-    });
-    
-    // Фильтрация
-    if (filterStatus !== 'all') {
-        enriched = enriched.filter(item => item.status === filterStatus);
-    }
-    if (filterBrand !== 'all') {
-        enriched = enriched.filter(item => item.brand === filterBrand);
-    }
-    
-    // Статистика (до фильтрации по бренду)
-    const allEmpty = Object.values(inventory).filter(item => item.quantity === 0);
-    const allEnriched = allEmpty.map(item => ({
-        ...item,
-        status: getWishlistItemStatus(item)
-    }));
-    const criticalCount = allEnriched.filter(i => i.status === 'critical').length;
-    const canUpdateCount = allEnriched.filter(i => i.status === 'can_update').length;
-    const considerCount = allEnriched.filter(i => i.status === 'consider').length;
-    
-    // Разбивка по брендам для каждого статуса
-    function brandBreakdown(items, status) {
-        const filtered = items.filter(i => i.status === status);
-        if (filtered.length === 0) return '';
-        const byBrand = {};
-        filtered.forEach(i => {
-            byBrand[i.brand] = (byBrand[i.brand] || 0) + 1;
-        });
-        return Object.entries(byBrand)
-            .sort((a, b) => b[1] - a[1])
-            .map(([brand, count]) => `<span class="wishlist-stat-brand">${getBadgeHtml(brand)} ${count}</span>`)
-            .join(' ');
-    }
+    // Статистика (до фильтрации)
+    const urgentCount = needToBuy.filter(g => g.priority.score >= 3).length;
+    const mediumCount = needToBuy.filter(g => g.priority.score === 2).length;
+    const minimalCount = needToBuy.filter(g => g.priority.score === 1).length;
+    const altCount = hasAlternative.length;
     
     document.getElementById('wishlist-stats').innerHTML = `
         <div class="stats-grid" style="margin-bottom: 0;">
             <div class="stat-card" style="background: var(--gradient-danger); padding: 12px;">
-                <h3 class="text-24">${criticalCount}</h3>
-                <p>Критический</p>
-                <div class="wishlist-stat-breakdown">${brandBreakdown(allEnriched, 'critical')}</div>
+                <h3 class="text-24">${urgentCount}</h3>
+                <p>🔴 Срочно</p>
             </div>
-            <div class="stat-card" style="background: var(--gradient-warning); padding: 12px;">
-                <h3 class="text-24">${canUpdateCount}</h3>
-                <p>Можно обновить</p>
-                <div class="wishlist-stat-breakdown">${brandBreakdown(allEnriched, 'can_update')}</div>
+            <div class="stat-card" style="background: var(--gradient-warning, linear-gradient(135deg, #fdcb6e, #e17055)); padding: 12px;">
+                <h3 class="text-24">${mediumCount}</h3>
+                <p>🟡 Средний</p>
+            </div>
+            <div class="stat-card" style="background: var(--gradient-info, linear-gradient(135deg, #dfe6e9, #b2bec3)); padding: 12px;">
+                <h3 class="text-24">${minimalCount}</h3>
+                <p>⚪ Минимальный</p>
             </div>
             <div class="stat-card" style="background: var(--gradient-success); padding: 12px;">
-                <h3 class="text-24">${considerCount}</h3>
-                <p>Рассмотреть</p>
-                <div class="wishlist-stat-breakdown">${brandBreakdown(allEnriched, 'consider')}</div>
+                <h3 class="text-24">${altCount}</h3>
+                <p>ℹ️ Альтернатива</p>
             </div>
         </div>
     `;
     
-    if (enriched.length === 0) {
-        container.innerHTML = '<div class="empty-state text-center" style="padding: 24px;">Список покупок пуст — все маркеры в наличии!</div>';
-        return;
+    // Фильтрация
+    let filteredNeed = needToBuy;
+    let filteredAlt = hasAlternative;
+    
+    // Фильтр по приоритету — только для секции "Нужно купить"
+    if (filterPriority !== 'all') {
+        filteredNeed = filteredNeed.filter(g => g.priority.class === filterPriority);
     }
     
-    // Группировка по брендам
-    const grouped = {};
-    enriched.forEach(item => {
-        if (!grouped[item.brand]) {
-            grouped[item.brand] = [];
-        }
-        grouped[item.brand].push(item);
-    });
+    // Фильтр по бренду — для обеих секций
+    if (filterBrand !== 'all') {
+        filteredNeed = filteredNeed.filter(g => g.brands.some(b => b.brand === filterBrand));
+        filteredAlt = filteredAlt.filter(g => g.brands.some(b => b.brand === filterBrand));
+    }
     
-    // Сортировка внутри группы: critical > can_update > consider
-    const statusOrder = { critical: 0, can_update: 1, consider: 2 };
-    Object.values(grouped).forEach(group => {
-        group.sort((a, b) => statusOrder[a.status] - statusOrder[b.status]);
-    });
+    // Поиск — для обеих секций
+    if (searchQuery) {
+        const matchesSearch = g =>
+            g.displayName.toUpperCase().includes(searchQuery) ||
+            g.brands.some(b => b.code.toUpperCase().includes(searchQuery));
+        filteredNeed = filteredNeed.filter(matchesSearch);
+        filteredAlt = filteredAlt.filter(matchesSearch);
+    }
     
     // Рендер
     let html = '';
-    const sortedBrands = Object.keys(grouped).sort();
     
-    sortedBrands.forEach(brand => {
-        const brandItems = grouped[brand];
-        html += `
-            <div class="wishlist-brand-group">
-                <div class="wishlist-brand-header">
-                    ${getBadgeHtml(brand)}
-                    <span class="wishlist-brand-count">${brandItems.length} шт.</span>
-                </div>
-                <table class="wishlist-table">
-                    <thead>
-                        <tr>
-                            <th>Статус</th>
-                            <th>Код цвета</th>
-                            <th>Аналоги</th>
-                            <th>Заканчивался</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${brandItems.map(item => {
-                            const statusInfo = getWishlistStatusInfo(item.status);
-                            const analoguesHtml = item.analogues.length > 0
-                                ? item.analogues.map(a => `${getBadgeHtml(a.brand)} ${escapeHtml(a.code)} (${a.quantity} шт.)`).join(', ')
-                                : '<span class="text-disabled">Нет аналогов</span>';
-                            
-                            return `
-                                <tr>
-                                    <td><span class="${statusInfo.class}">${statusInfo.icon} ${statusInfo.text}</span></td>
-                                    <td><strong>${escapeHtml(item.code)}</strong></td>
-                                    <td>${analoguesHtml}</td>
-                                    <td>${item.timesEmptied > 0 ? item.timesEmptied + ' раз' : '<span class="text-disabled">—</span>'}</td>
-                                </tr>
-                            `;
-                        }).join('')}
-                    </tbody>
-                </table>
-            </div>
-        `;
-    });
+    html += renderWishlistSection(filteredNeed, 'need', 'Нужно купить', '🛒', 0);
+    html += renderWishlistSection(filteredAlt, 'alt', 'Есть альтернатива у другого бренда', 'ℹ️', filteredNeed.length);
+    
+    if (!html) {
+        container.innerHTML = '<div class="empty-state" style="padding: 24px;">Список покупок пуст — все маркеры в наличии!</div>';
+        return;
+    }
     
     container.innerHTML = html;
 }
@@ -201,36 +311,6 @@ function renderWishlist() {
 function downloadCSV(csvContent, filename) {
     const BOM = '\uFEFF';
     downloadFile(BOM + csvContent, filename, 'text/csv;charset=utf-8');
-}
-
-function exportDataCSV() {
-    const items = Object.values(inventory);
-    
-    if (items.length === 0) {
-        showToast('Нет данных для экспорта', 'warning');
-        return;
-    }
-    
-    let csv = 'Бренд;Код цвета;Своих шт.;Аналоги шт.;Всего (цвет);Статус;Заканчивался раз\n';
-    
-    items.sort((a, b) => {
-        if (a.brand !== b.brand) return a.brand.localeCompare(b.brand);
-        return a.code.localeCompare(b.code);
-    });
-    
-    items.forEach(item => {
-        const status = getStatus(item.quantity, item.brand, item.code);
-        const statusText = getStatusText(status);
-        const analogues = getAnalogues(item.brand, item.code);
-        const analoguesQty = analogues.reduce((sum, a) => sum + (a.quantity || 0), 0);
-        const colorTotal = getColorTotal(item.brand, item.code);
-        const timesEmptied = item.timesEmptied || 0;
-        
-        csv += `"${item.brand}";"${item.code}";${item.quantity};${analoguesQty};${colorTotal};"${statusText}";${timesEmptied}\n`;
-    });
-    
-    downloadCSV(csv, `marker-inventory-${new Date().toISOString().slice(0, 10)}.csv`);
-    showToast('Инвентарь экспортирован в CSV!', 'success');
 }
 
 function exportHistoryCSV() {
@@ -260,33 +340,26 @@ function exportHistoryCSV() {
 }
 
 function exportWishlistCSV() {
-    const items = Object.values(inventory).filter(item => item.quantity === 0);
+    const { needToBuy, hasAlternative } = buildColorGroups();
     
-    if (items.length === 0) {
+    if (needToBuy.length === 0 && hasAlternative.length === 0) {
         showToast('Список покупок пуст', 'warning');
         return;
     }
     
-    let csv = 'Статус;Бренд;Код цвета;Аналоги;Заканчивался раз\n';
+    let csv = 'Секция;Приоритет;Заканчивался раз (сумма);Цвет;Бренд;Код;Своих;Итого по цвету\n';
     
-    const enriched = items.map(item => {
-        const analogues = getAnalogues(item.brand, item.code);
-        const status = getWishlistItemStatus(item);
-        const statusInfo = getWishlistStatusInfo(status);
-        const analoguesText = analogues.length > 0
-            ? analogues.map(a => `${a.brand} ${a.code} (${a.quantity} шт.)`).join(', ')
-            : 'Нет аналогов';
-        return {
-            brand: item.brand,
-            code: item.code,
-            statusText: statusInfo.text,
-            analoguesText,
-            timesEmptied: item.timesEmptied || 0
-        };
-    }).sort((a, b) => a.brand.localeCompare(b.brand) || a.code.localeCompare(b.code));
+    needToBuy.forEach(group => {
+        const priorityText = group.priority.text;
+        group.brands.forEach(b => {
+            csv += `"Нужно купить";"${priorityText}";${group.sumTimesEmptied};"${group.displayName}";"${b.brand}";"${b.code}";${b.quantity};${group.totalQty}\n`;
+        });
+    });
     
-    enriched.forEach(item => {
-        csv += `"${item.statusText}";"${item.brand}";"${item.code}";"${item.analoguesText}";${item.timesEmptied}\n`;
+    hasAlternative.forEach(group => {
+        group.brands.forEach(b => {
+            csv += `"Есть альтернатива";"—";${group.sumTimesEmptied};"${group.displayName}";"${b.brand}";"${b.code}";${b.quantity};${group.totalQty}\n`;
+        });
     });
     
     downloadCSV(csv, `marker-wishlist-${new Date().toISOString().slice(0, 10)}.csv`);
@@ -310,15 +383,15 @@ function downloadFile(content, filename, mimeType) {
 const MAX_BACKUPS = 5;
 
 function createAutoBackup() {
-    const backups = JSON.parse(localStorage.getItem(LS_PREFIX + 'backups')) || [];
+    const backups = JSON.parse(localStorage.getItem('markerBackups')) || [];
     
     const backup = {
         timestamp: new Date().toISOString(),
         data: {
-            inventory: JSON.parse(localStorage.getItem(LS_PREFIX + 'inventory')) || {},
-            history: JSON.parse(localStorage.getItem(LS_PREFIX + 'history')) || [],
-            customBrands: JSON.parse(localStorage.getItem(LS_PREFIX + 'customBrands')) || [],
-            customMappings: JSON.parse(localStorage.getItem(LS_PREFIX + 'customMappings')) || {}
+            inventory: JSON.parse(localStorage.getItem('markerInventory')) || {},
+            history: JSON.parse(localStorage.getItem('markerHistory')) || [],
+            customBrands: JSON.parse(localStorage.getItem('customBrands')) || [],
+            customMappings: JSON.parse(localStorage.getItem('customMappings')) || {}
         }
     };
     
@@ -329,12 +402,12 @@ function createAutoBackup() {
         backups.shift();
     }
     
-    localStorage.setItem(LS_PREFIX + 'backups', JSON.stringify(backups));
+    localStorage.setItem('markerBackups', JSON.stringify(backups));
     console.log(`Автобэкап создан: ${backup.timestamp}`);
 }
 
 function restoreBackup(index) {
-    const backups = JSON.parse(localStorage.getItem(LS_PREFIX + 'backups')) || [];
+    const backups = JSON.parse(localStorage.getItem('markerBackups')) || [];
     
     if (index < 0 || index >= backups.length) {
         showToast('Бэкап не найден', 'error');
@@ -349,10 +422,10 @@ function restoreBackup(index) {
         return;
     }
     
-    localStorage.setItem(LS_PREFIX + 'inventory', JSON.stringify(backup.data.inventory));
-    localStorage.setItem(LS_PREFIX + 'history', JSON.stringify(backup.data.history));
-    localStorage.setItem(LS_PREFIX + 'customBrands', JSON.stringify(backup.data.customBrands));
-    localStorage.setItem(LS_PREFIX + 'customMappings', JSON.stringify(backup.data.customMappings));
+    localStorage.setItem('markerInventory', JSON.stringify(backup.data.inventory));
+    localStorage.setItem('markerHistory', JSON.stringify(backup.data.history));
+    localStorage.setItem('customBrands', JSON.stringify(backup.data.customBrands));
+    localStorage.setItem('customMappings', JSON.stringify(backup.data.customMappings));
     // Перезагрузка данных
     inventory = backup.data.inventory;
     history = backup.data.history;
@@ -364,16 +437,14 @@ function restoreBackup(index) {
     renderCustomBrandsList();
     renderExistingMappings();
     renderInventory();
-    renderHistory();
     renderRecommendations();
-    renderStats();
     renderWishlist();
     
     showToast('Данные восстановлены!', 'success');
 }
 
 function getBackupsList() {
-    return JSON.parse(localStorage.getItem(LS_PREFIX + 'backups')) || [];
+    return JSON.parse(localStorage.getItem('markerBackups')) || [];
 }
 
 // Автобэкап при изменениях (с троттлингом)

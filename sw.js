@@ -34,7 +34,8 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Стратегия: сначала кэш для статики, сеть для CDN
+// Стратегия: сначала сеть, потом кэш (для динамического контента)
+// Для статических ресурсов — сначала кэш
 self.addEventListener('fetch', (event) => {
   // Пропускаем запросы к CDN (chart.js)
   if (event.request.url.includes('cdn.jsdelivr.net')) {

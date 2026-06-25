@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Учёт маркеров для раскрашивания</title>
-    <meta name="description" content="Приложение для учёта маркеров для раскрашивания: инвентарь, поиск замен, статистика">
+    <meta name="description" content="Приложение для учёта маркеров для раскрашивания: инвентарь, расход, список покупок">
     <meta name="theme-color" content="#6c63ff">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -13,7 +13,6 @@
     <link rel="icon" href="logo.png" type="image/png">
     <link rel="apple-touch-icon" href="logo.png">
     <link rel="stylesheet" href="styles.css">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 </head>
 <body>
     <div class="container">
@@ -24,10 +23,7 @@
         
         <div class="tabs">
             <button class="tab active" onclick="switchTab('inventory', event)">📦 Мои маркеры</button>
-            <button class="tab" onclick="switchTab('search', event)">🔍 Поиск замен</button>
-            <button class="tab" onclick="switchTab('add', event)">➕ Добавить/Расход</button>
-            <button class="tab" onclick="switchTab('history', event)">📋 История</button>
-            <button class="tab" onclick="switchTab('stats', event)">📊 Статистика</button>
+            <button class="tab" onclick="switchTab('add', event)">➕ Добавить</button>
             <button class="tab" onclick="switchTab('wishlist', event)">🛒 Список покупок <span id="wishlist-badge" class="tab-badge" style="display:none;">0</span></button>
         </div>
 
@@ -66,12 +62,11 @@
                 <select id="filter-highlight" onchange="renderInventory()">
                     <option value="all">Все маркеры</option>
                     <option value="top_stock">🔥 Топ по наличию (≥3 шт.)</option>
-                    <option value="frequently_empty">⚠️ Часто заканчиваются</option>
+                    <option value="frequently_empty">⚠️ Часто используются</option>
                 </select>
                 <input type="text" id="filter-search" placeholder="Поиск по коду цвета..." oninput="debouncedRenderInventory()">
-                <button class="btn-warning" onclick="resetData()" style="white-space: nowrap;" title="Сбросить все данные">🔄 Сброс</button>
+                <button class="btn-warning" onclick="resetData()" style="white-space: nowrap; display: none;" title="Сбросить все данные">🔄 Сброс</button>
                 <button class="btn-info" onclick="exportData()" style="white-space: nowrap;" title="Сохранить все данные в JSON-файл">💾</button>
-                <button class="btn-info" onclick="exportDataCSV()" style="white-space: nowrap;" title="Экспортировать инвентарь в CSV для Excel">📊</button>
                 <button class="btn-info" onclick="document.getElementById('import-file').click()" style="white-space: nowrap;" title="Загрузить данные из JSON-файла">⬆️</button>
                 <input type="file" id="import-file" accept=".json" style="display: none;" onchange="importData(event)">
             </div>
@@ -81,11 +76,10 @@
                     <thead>
                         <tr>
                             <th>Бренд</th>
-                            <th>Код цвета</th>
-                            <th>Аналоги из других фирм</th>
-                            <th>Своих шт.</th>
-                            <th>Аналоги шт.</th>
-                            <th>Всего (цвет)</th>
+                            <th>Код</th>
+                            <th>Аналоги</th>
+                            <th>Своих</th>
+                            <th>Итого</th>
                             <th>Статус</th>
                             <th>Действия</th>
                         </tr>
@@ -96,75 +90,10 @@
             </div>
         </div>
 
-        <!-- Вкладка: Поиск замен -->
-        <div id="search" class="tab-content">
-            <div class="section">
-                <h2>Найти замену цвета</h2>
-                <p class="text-muted" style="margin-bottom: 16px;">
-                    Если у вас закончился какой-то цвет — здесь можно найти замену из другого бренда.
-                </p>
-                <div class="search-box">
-                    <select id="search-brand">
-                    </select>
-                    <input type="text" id="search-code" placeholder="Введите код цвета..." onkeydown="if(event.key==='Enter')searchReplacement()">
-                    <button onclick="searchReplacement()">Найти замену</button>
-                </div>
-            </div>
 
-            <div id="search-results">
-                <div class="empty-state">
-                    <p>Введите код цвета для поиска замен</p>
-                </div>
-            </div>
-        </div>
-
-        <!-- Вкладка: Добавить/Расход -->
+        <!-- Вкладка: Добавить -->
         <div id="add" class="tab-content">
-            <!-- 1. Покупка -->
-            <div class="section">
-                <h2>Добавить маркеры (покупка)</h2>
-                <div class="inline-form">
-                    <div class="form-group">
-                        <label>Бренд</label>
-                        <select id="add-brand">
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Код цвета</label>
-                        <input type="text" id="add-code" placeholder="Например: 600 или BL210" list="add-code-list" autocomplete="off">
-                        <datalist id="add-code-list"></datalist>
-                    </div>
-                    <div class="form-group">
-                        <label>Количество</label>
-                        <input type="number" id="add-quantity" min="1" value="1">
-                    </div>
-                    <button onclick="addMarkers()">Добавить</button>
-                </div>
-            </div>
-
-            <!-- 2. Расход -->
-            <div class="section">
-                <h2>Отметить расход</h2>
-                <div class="inline-form">
-                    <div class="form-group">
-                        <label>Бренд</label>
-                        <select id="use-brand">
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Код цвета</label>
-                        <input type="text" id="use-code" placeholder="Например: 600 или BL210" list="use-code-list" autocomplete="off">
-                        <datalist id="use-code-list"></datalist>
-                    </div>
-                    <div class="form-group">
-                        <label>Количество</label>
-                        <input type="number" id="use-quantity" min="1" value="1">
-                    </div>
-                    <button class="btn-danger" onclick="useMarkers()">Списать</button>
-                </div>
-            </div>
-
-            <!-- 3. Новый бренд -->
+            <!-- 1. Новый бренд -->
             <div class="section">
                 <h2>🏷️ Добавить новый бренд</h2>
                 <p class="text-muted" style="margin-bottom: 16px;">
@@ -184,7 +113,7 @@
                 <div id="custom-brands-list" style="margin-top: 16px;"></div>
             </div>
 
-            <!-- 4. Соответствие (аналоги) -->
+            <!-- 2. Соответствие (аналоги) -->
             <div class="section">
                 <h2>🔗 Добавить соответствие (аналоги цветов)</h2>
                 <p class="text-muted" style="margin-bottom: 16px;">
@@ -192,13 +121,19 @@
                 </p>
                 <div id="mapping-rows">
                     <div class="mapping-row" data-index="0">
-                        <select class="mapping-brand-0">
+                        <select class="mapping-brand-0" onchange="updateMappingAutocomplete(0, 0)">
                         </select>
-                        <input type="text" class="mapping-code-0" placeholder="Код цвета" style="width: 120px;">
+                        <div class="autocomplete-wrapper">
+                            <input type="text" class="mapping-code-0" placeholder="Код цвета" oninput="filterMappingSuggestions(this, 0, 0)" onfocus="filterMappingSuggestions(this, 0, 0)" style="width: 120px;">
+                            <div class="autocomplete-dropdown" id="mapping-dropdown-0-0"></div>
+                        </div>
                         <span class="text-primary-accent" style="font-weight: bold;">⟷</span>
-                        <select class="mapping-brand-1">
+                        <select class="mapping-brand-1" onchange="updateMappingAutocomplete(0, 1)">
                         </select>
-                        <input type="text" class="mapping-code-1" placeholder="Код цвета" style="width: 120px;">
+                        <div class="autocomplete-wrapper">
+                            <input type="text" class="mapping-code-1" placeholder="Код цвета" oninput="filterMappingSuggestions(this, 0, 1)" onfocus="filterMappingSuggestions(this, 0, 1)" style="width: 120px;">
+                            <div class="autocomplete-dropdown" id="mapping-dropdown-0-1"></div>
+                        </div>
                     </div>
                 </div>
                 <div style="margin-top: 12px; display: flex; gap: 8px;">
@@ -208,7 +143,7 @@
                 <div id="existing-mappings" class="existing-mappings"></div>
             </div>
 
-            <!-- 5. Набор -->
+            <!-- 3. Набор -->
             <div class="section">
                 <h2>Быстрое добавление набора</h2>
                 <div class="inline-form">
@@ -222,49 +157,27 @@
                         <select id="bulk-set">
                         </select>
                     </div>
-                    <div class="form-group">
-                        <label>Количество каждого цвета</label>
-                        <input type="number" id="bulk-quantity" min="1" value="1">
-                    </div>
                     <button class="btn-success" onclick="addBulkSet()">Добавить набор</button>
                 </div>
             </div>
         </div>
 
-        <!-- Вкладка: История -->
-        <div id="history" class="tab-content">
-            <div class="section">
-                <h2>История операций</h2>
-                <div style="margin-bottom: 12px;">
-                    <button class="btn-info" onclick="exportHistoryCSV()" style="white-space: nowrap;">📊 Экспорт истории CSV</button>
-                </div>
-                <div id="history-list">
-                </div>
-            </div>
-        </div>
 
-        <!-- Вкладка: Статистика -->
-        <div id="stats" class="tab-content">
-            <div class="section">
-                <h2>Статистика использования</h2>
-                <div id="stats-content">
-                </div>
-            </div>
-        </div>
 
         <!-- Вкладка: Список покупок -->
         <div id="wishlist" class="tab-content">
             <div class="section">
                 <h2>🛒 Список покупок</h2>
                 <p class="text-muted" style="margin-bottom: 16px;">
-                    Автоматически формируется из маркеров с количеством 0. Сгруппировано по брендам.
+                    Группировка по цветам. Приоритет зависит от того, сколько раз цвет использовался (сумма по всем брендам). Цвета с альтернативой у другого бренда показываются отдельно.
                 </p>
                 <div class="filter-row" style="margin-bottom: 12px;">
+                    <input type="text" id="wishlist-search" placeholder="Поиск по коду цвета..." oninput="debouncedRenderWishlist()">
                     <select id="wishlist-filter-status" onchange="renderWishlist()">
-                        <option value="all">Все статусы</option>
-                        <option value="critical">🔴 Критический</option>
-                        <option value="can_update">🟡 Можно обновить</option>
-                        <option value="consider">🟢 Рассмотреть покупку</option>
+                        <option value="all">Все приоритеты</option>
+                        <option value="priority-urgent">🔴 Срочно</option>
+                        <option value="priority-medium">🟡 Средний</option>
+                        <option value="priority-minimal">⚪ Минимальный</option>
                     </select>
                     <select id="wishlist-filter-brand" onchange="renderWishlist()">
                         <option value="all">Все бренды</option>

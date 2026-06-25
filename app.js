@@ -44,9 +44,9 @@ const debouncedRenderInventory = debounce(() => renderInventory(), 300);
 
 // ==================== ГЛОБАЛЬНОЕ СОСТОЯНИЕ ====================
 
-// Данные о маркерах пользователя (LS_PREFIX определён в data.js)
-let inventory = JSON.parse(localStorage.getItem(LS_PREFIX + 'inventory')) || {};
-let history = JSON.parse(localStorage.getItem(LS_PREFIX + 'history')) || [];
+// Данные о маркерах пользователя
+let inventory = JSON.parse(localStorage.getItem('markerInventory')) || {};
+let history = JSON.parse(localStorage.getItem('markerHistory')) || [];
 
 // ==================== ДИНАМИЧЕСКИЕ БРЕНДЫ ====================
 
@@ -68,8 +68,8 @@ function populateBrandSelects() {
         filterBrand.value = currentVal || 'all';
     }
     
-    // Селекты для добавления/расхода/поиска/сравнения
-    const simpleSelects = ['add-brand', 'use-brand', 'search-brand'];
+    // Селекты для набора
+    const simpleSelects = [];
     simpleSelects.forEach(id => {
         const sel = document.getElementById(id);
         if (sel) {
@@ -119,6 +119,14 @@ function populateBrandSelects() {
         });
         if (currentVal && allBrands.includes(currentVal)) {
             sel.value = currentVal;
+        }
+    });
+    // Обновить подсказки цветов в маппинге
+    document.querySelectorAll('.mapping-row').forEach(row => {
+        const idx = row.getAttribute('data-index');
+        if (idx !== null) {
+            updateMappingAutocomplete(parseInt(idx), 0);
+            updateMappingAutocomplete(parseInt(idx), 1);
         }
     });
     // Обновить autocomplete (функция из features.js)
@@ -285,17 +293,17 @@ function renderCustomBrandsList() {
     
     if (customBrands.length === 0) {
         container.innerHTML = '<p class="text-disabled text-14">Пока нет добавленных брендов</p>';
-        return;
-    }
-    
-    container.innerHTML = '<h3 class="mb-8 text-16">Добавленные бренды:</h3>' +
-        customBrands.map(b => `
-            <div class="custom-brand-item">
-                <div class="color-dot" style="background: ${escapeHtml(b.color)};"></div>
-                <span class="brand-name">${escapeHtml(b.name)}</span>
-                <button class="btn-remove-row" onclick="removeCustomBrand('${escapeHtml(b.name)}')">✕ Удалить</button>
-            </div>
-        `).join('');
+            return;
+        }
+        
+        container.innerHTML = '<h3 class="mb-8 text-16">Добавленные бренды:</h3>' +
+            customBrands.map(b => `
+                <div class="custom-brand-item">
+                    <div class="color-dot" style="background: ${escapeHtml(b.color)};"></div>
+                    <span class="brand-name">${escapeHtml(b.name)}</span>
+                    <button class="btn-remove-row" onclick="removeCustomBrand('${escapeHtml(b.name)}')">✕ Удалить</button>
+                </div>
+            `).join('');
 }
 
 // ==================== УПРАВЛЕНИЕ МАППИНГАМИ ====================
@@ -306,21 +314,104 @@ function addMappingRow() {
     const container = document.getElementById('mapping-rows');
     const allBrands = getAllBrands();
     const optionsHtml = allBrands.map(b => `<option value="${b}">${b}</option>`).join('');
+    const idx = mappingRowIndex;
     
     const row = document.createElement('div');
     row.className = 'mapping-row';
-    row.setAttribute('data-index', mappingRowIndex);
+    row.setAttribute('data-index', idx);
     row.innerHTML = `
-        <select class="mapping-brand-0">${optionsHtml}</select>
-        <input type="text" class="mapping-code-0" placeholder="Код цвета" style="width: 120px;">
+        <select class="mapping-brand-0" onchange="updateMappingAutocomplete(${idx}, 0)">${optionsHtml}</select>
+        <div class="autocomplete-wrapper">
+            <input type="text" class="mapping-code-0" placeholder="Код цвета" oninput="filterMappingSuggestions(this, ${idx}, 0)" onfocus="filterMappingSuggestions(this, ${idx}, 0)" style="width: 120px;">
+            <div class="autocomplete-dropdown" id="mapping-dropdown-${idx}-0"></div>
+        </div>
         <span class="text-primary-accent" style="font-weight: bold;">⟷</span>
-        <select class="mapping-brand-1">${optionsHtml}</select>
-        <input type="text" class="mapping-code-1" placeholder="Код цвета" style="width: 120px;">
+        <select class="mapping-brand-1" onchange="updateMappingAutocomplete(${idx}, 1)">${optionsHtml}</select>
+        <div class="autocomplete-wrapper">
+            <input type="text" class="mapping-code-1" placeholder="Код цвета" oninput="filterMappingSuggestions(this, ${idx}, 1)" onfocus="filterMappingSuggestions(this, ${idx}, 1)" style="width: 120px;">
+            <div class="autocomplete-dropdown" id="mapping-dropdown-${idx}-1"></div>
+        </div>
         <button class="btn-remove-row" onclick="this.parentElement.remove()">✕</button>
     `;
     container.appendChild(row);
     mappingRowIndex++;
 }
+
+// Кэш цветов по брендам для автокомплита
+const _mappingColorsCache = {};
+
+function updateMappingAutocomplete(rowIndex, sideIndex) {
+    // Сбрасываем поле ввода при смене бренда
+    const row = document.querySelector(`.mapping-row[data-index="${rowIndex}"]`);
+    if (!row) return;
+    const input = row.querySelector(`.mapping-code-${sideIndex}`);
+    if (input) input.value = '';
+    // Скрываем dropdown
+    const dropdown = document.getElementById(`mapping-dropdown-${rowIndex}-${sideIndex}`);
+    if (dropdown) dropdown.style.display = 'none';
+}
+
+// Фильтрация подсказок по вводимому тексту
+function filterMappingSuggestions(inputEl, rowIndex, sideIndex) {
+    const row = document.querySelector(`.mapping-row[data-index="${rowIndex}"]`);
+    if (!row) return;
+    
+    const brandSelect = row.querySelector(`.mapping-brand-${sideIndex}`);
+    const dropdown = document.getElementById(`mapping-dropdown-${rowIndex}-${sideIndex}`);
+    if (!brandSelect || !dropdown) return;
+    
+    const brand = brandSelect.value;
+    const query = inputEl.value.trim().toUpperCase();
+    
+    // Получаем цвета (с кэшированием)
+    const cacheKey = brand;
+    if (!_mappingColorsCache[cacheKey]) {
+        _mappingColorsCache[cacheKey] = getBrandColors(brand);
+    }
+    const colors = _mappingColorsCache[cacheKey];
+    
+    if (!query) {
+        // Показываем все при пустом вводе (но не более 20)
+        const matches = colors.slice(0, 20);
+        renderMappingDropdown(dropdown, matches, inputEl, rowIndex, sideIndex);
+        return;
+    }
+    
+    // Фильтрация по подстроке
+    const matches = colors.filter(c => c.brandCode.toUpperCase().includes(query)).slice(0, 20);
+    
+    if (matches.length === 0) {
+        dropdown.style.display = 'none';
+        return;
+    }
+    
+    renderMappingDropdown(dropdown, matches, inputEl, rowIndex, sideIndex);
+}
+
+function renderMappingDropdown(dropdown, matches, inputEl, rowIndex, sideIndex) {
+    dropdown.innerHTML = matches.map(c =>
+        `<div class="autocomplete-item" onmousedown="selectMappingSuggestion(this, '${c.brandCode.replace(/'/g, "\\'")}', ${rowIndex}, ${sideIndex})">${c.brandCode}</div>`
+    ).join('');
+    dropdown.style.display = 'block';
+}
+
+function selectMappingSuggestion(el, value, rowIndex, sideIndex) {
+    const row = document.querySelector(`.mapping-row[data-index="${rowIndex}"]`);
+    if (!row) return;
+    const input = row.querySelector(`.mapping-code-${sideIndex}`);
+    if (input) input.value = value;
+    const dropdown = document.getElementById(`mapping-dropdown-${rowIndex}-${sideIndex}`);
+    if (dropdown) dropdown.style.display = 'none';
+}
+
+// Скрытие dropdown при клике вне
+document.addEventListener('click', function(e) {
+    if (!e.target.closest('.autocomplete-wrapper')) {
+        document.querySelectorAll('.autocomplete-dropdown').forEach(dd => {
+            dd.style.display = 'none';
+        });
+    }
+});
 
 function saveMapping() {
     const rows = document.querySelectorAll('#mapping-rows .mapping-row');
@@ -369,11 +460,17 @@ function saveMapping() {
     const container = document.getElementById('mapping-rows');
     container.innerHTML = `
         <div class="mapping-row" data-index="0">
-            <select class="mapping-brand-0"></select>
-            <input type="text" class="mapping-code-0" placeholder="Код цвета" style="width: 120px;">
+            <select class="mapping-brand-0" onchange="updateMappingAutocomplete(0, 0)"></select>
+            <div class="autocomplete-wrapper">
+                <input type="text" class="mapping-code-0" placeholder="Код цвета" oninput="filterMappingSuggestions(this, 0, 0)" onfocus="filterMappingSuggestions(this, 0, 0)" style="width: 120px;">
+                <div class="autocomplete-dropdown" id="mapping-dropdown-0-0"></div>
+            </div>
             <span class="text-primary-accent" style="font-weight: bold;">⟷</span>
-            <select class="mapping-brand-1"></select>
-            <input type="text" class="mapping-code-1" placeholder="Код цвета" style="width: 120px;">
+            <select class="mapping-brand-1" onchange="updateMappingAutocomplete(0, 1)"></select>
+            <div class="autocomplete-wrapper">
+                <input type="text" class="mapping-code-1" placeholder="Код цвета" oninput="filterMappingSuggestions(this, 0, 1)" onfocus="filterMappingSuggestions(this, 0, 1)" style="width: 120px;">
+                <div class="autocomplete-dropdown" id="mapping-dropdown-0-1"></div>
+            </div>
         </div>
     `;
     populateBrandSelects();
@@ -517,7 +614,7 @@ function importData(event) {
                 saveCustomMappings(data.customMappings);
             }
             if (Array.isArray(data.backups)) {
-                localStorage.setItem(LS_PREFIX + 'backups', JSON.stringify(data.backups));
+                localStorage.setItem('markerBackups', JSON.stringify(data.backups));
             }
 
             saveData();
@@ -528,9 +625,7 @@ function importData(event) {
             renderCustomBrandsList();
             renderExistingMappings();
             renderInventory();
-            renderHistory();
             renderRecommendations();
-            renderStats();
 
             showToast('Данные успешно импортированы!', 'success');
         } catch (err) {
@@ -552,7 +647,7 @@ function toggleTheme() {
     const current = document.documentElement.getAttribute('data-theme');
     const next = current === 'dark' ? 'light' : 'dark';
     document.documentElement.setAttribute('data-theme', next);
-    localStorage.setItem(LS_PREFIX + 'theme', next);
+    localStorage.setItem('theme', next);
     updateThemeIcon(next);
 }
 
@@ -564,7 +659,7 @@ function updateThemeIcon(theme) {
 }
 
 function applySavedTheme() {
-    const saved = localStorage.getItem(LS_PREFIX + 'theme') || 'light';
+    const saved = localStorage.getItem('theme') || 'light';
     document.documentElement.setAttribute('data-theme', saved);
     updateThemeIcon(saved);
 }
@@ -577,9 +672,7 @@ document.addEventListener('DOMContentLoaded', function() {
     renderCustomBrandsList();
     renderExistingMappings();
     renderInventory();
-    renderHistory();
     renderRecommendations();
-    renderStats();
     updateWishlistBadge();
     
     // Autocomplete (из features.js)
@@ -608,10 +701,6 @@ function switchTab(tabName, event) {
         populateBrandSelects();
         renderCustomBrandsList();
         renderExistingMappings();
-    } else if (tabName === 'history') {
-        renderHistory();
-    } else if (tabName === 'stats') {
-        renderStats();
     } else if (tabName === 'wishlist') {
         populateBrandSelects();
         renderWishlist();
@@ -620,8 +709,8 @@ function switchTab(tabName, event) {
 
 // Сохранение данных
 function saveData() {
-    localStorage.setItem(LS_PREFIX + 'inventory', JSON.stringify(inventory));
-    localStorage.setItem(LS_PREFIX + 'history', JSON.stringify(history));
+    localStorage.setItem('markerInventory', JSON.stringify(inventory));
+    localStorage.setItem('markerHistory', JSON.stringify(history));
     updateWishlistBadge();
     // Автобэкап (функция из features.js)
     if (typeof scheduleAutoBackup === 'function') {
@@ -630,15 +719,30 @@ function saveData() {
 }
 
 // Обновить badge на вкладке "Список покупок"
+// Показывает количество цветов со статусом "Срочно" (сумма timesEmptied >= 3)
 function updateWishlistBadge() {
     const badge = document.getElementById('wishlist-badge');
     if (!badge) return;
-    const emptyCount = Object.values(inventory).filter(item => item.quantity === 0).length;
-    if (emptyCount > 0) {
-        badge.textContent = emptyCount;
-        badge.style.display = 'inline-flex';
+    
+    // Если buildColorGroups доступна (features.js загружен) — считаем по цветам
+    if (typeof buildColorGroups === 'function') {
+        const { needToBuy } = buildColorGroups();
+        const urgentCount = needToBuy.filter(g => g.priority && g.priority.score >= 3).length;
+        if (urgentCount > 0) {
+            badge.textContent = urgentCount;
+            badge.style.display = 'inline-flex';
+        } else {
+            badge.style.display = 'none';
+        }
     } else {
-        badge.style.display = 'none';
+        // Fallback: features.js ещё не загружен
+        const emptyCount = Object.values(inventory).filter(item => item.quantity === 0).length;
+        if (emptyCount > 0) {
+            badge.textContent = emptyCount;
+            badge.style.display = 'inline-flex';
+        } else {
+            badge.style.display = 'none';
+        }
     }
 }
 
@@ -649,33 +753,31 @@ function showModal(title, content) {
     document.getElementById('modal').classList.add('active');
 }
 
-// Сброс данных — очистка всего инвентаря
+// Сброс данных и перезагрузка начальных
 function resetData() {
-    if (!confirm('Вы уверены? Все текущие данные будут удалены.\n\nПользовательские бренды и соответствия также будут удалены!')) {
+    if (!confirm('Вы уверены? Все текущие данные будут удалены и загружены начальные.\n\nПользовательские бренды и соответствия также будут удалены!')) {
         return;
     }
-    localStorage.removeItem(LS_PREFIX + 'inventory');
-    localStorage.removeItem(LS_PREFIX + 'history');
-    localStorage.removeItem(LS_PREFIX + 'customBrands');
-    localStorage.removeItem(LS_PREFIX + 'customMappings');
-    localStorage.removeItem(LS_PREFIX + 'wishlist');
-    localStorage.removeItem(LS_PREFIX + 'backups');
+    localStorage.removeItem('markerInventory');
+    localStorage.removeItem('markerHistory');
+    localStorage.removeItem('customBrands');
+    localStorage.removeItem('customMappings');
+    localStorage.removeItem('markerWishlist');
+    localStorage.removeItem('markerBackups');
     inventory = {};
     history = [];
     initializeData();
     migrateTimesEmptied();
     buildReverseIndex();
     mergeCustomMappingsIntoReverseIndex();
-    inventory = JSON.parse(localStorage.getItem(LS_PREFIX + 'inventory')) || {};
-    history = JSON.parse(localStorage.getItem(LS_PREFIX + 'history')) || [];
+    inventory = JSON.parse(localStorage.getItem('markerInventory')) || {};
+    history = JSON.parse(localStorage.getItem('markerHistory')) || [];
     populateBrandSelects();
     renderCustomBrandsList();
     renderExistingMappings();
     renderInventory();
-    renderHistory();
     renderRecommendations();
-    renderStats();
-    showToast('Данные сброшены! Инвентарь пуст.', 'success');
+    showToast('Данные сброшены и загружены заново!', 'success');
 }
 
 function closeModal() {

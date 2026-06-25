@@ -375,26 +375,27 @@ const COLOR_MAPPING = {
     "Languo_HC609": { guangNa: null, languo: "HC609", grasp: "M09" }
 };
 
+
 // ==================== ПОЛЬЗОВАТЕЛЬСКИЕ БРЕНДЫ И МАППИНГИ ====================
 
 // Получить список пользовательских брендов из localStorage
 function getCustomBrands() {
-    return JSON.parse(localStorage.getItem((typeof LS_PREFIX !== 'undefined' ? LS_PREFIX : '') + 'customBrands')) || [];
+    return JSON.parse(localStorage.getItem('customBrands')) || [];
 }
 
 // Сохранить список пользовательских брендов
 function saveCustomBrands(brands) {
-    localStorage.setItem((typeof LS_PREFIX !== 'undefined' ? LS_PREFIX : '') + 'customBrands', JSON.stringify(brands));
+    localStorage.setItem('customBrands', JSON.stringify(brands));
 }
 
 // Получить пользовательские маппинги из localStorage
 function getCustomMappings() {
-    return JSON.parse(localStorage.getItem((typeof LS_PREFIX !== 'undefined' ? LS_PREFIX : '') + 'customMappings')) || {};
+    return JSON.parse(localStorage.getItem('customMappings')) || {};
 }
 
 // Сохранить пользовательские маппинги
 function saveCustomMappings(mappings) {
-    localStorage.setItem((typeof LS_PREFIX !== 'undefined' ? LS_PREFIX : '') + 'customMappings', JSON.stringify(mappings));
+    localStorage.setItem('customMappings', JSON.stringify(mappings));
 }
 
 // Встроенные бренды (единый источник истины)
@@ -604,7 +605,7 @@ function getBrandColors(brand) {
     const customBrands = getCustomBrands();
     const isCustom = customBrands.some(b => b.name === brand);
     if (isCustom) {
-        const inv = JSON.parse(localStorage.getItem((typeof LS_PREFIX !== 'undefined' ? LS_PREFIX : '') + 'inventory')) || {};
+        const inv = JSON.parse(localStorage.getItem('markerInventory')) || {};
         for (const [key, item] of Object.entries(inv)) {
             if (item.brand === brand) {
                 // Проверяем, не дублирует ли уже из COLOR_MAPPING

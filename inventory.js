@@ -57,8 +57,9 @@ function saveInlineEdit(brand, code, inputElement) {
         });
     }
 
-    if (newQty === 0 && oldQty > 0) {
-        inventory[key].timesEmptied = (inventory[key].timesEmptied || 0) + 1;
+    // Каждое уменьшение = 1 использование
+    if (diff < 0) {
+        inventory[key].timesEmptied = (inventory[key].timesEmptied || 0) + Math.abs(diff);
     }
 
     saveData();
@@ -136,10 +137,11 @@ function useMarkers() {
     document.getElementById('use-code').value = '';
     document.getElementById('use-quantity').value = '1';
     
+    // Каждое списание = использование
+    inventory[key].timesEmptied = (inventory[key].timesEmptied || 0) + quantity;
+    saveData();
     if (inventory[key].quantity === 0) {
-        inventory[key].timesEmptied = (inventory[key].timesEmptied || 0) + 1;
-        saveData();
-        showToast(`Внимание! ${brand} ${code} закончился! (заканчивался ${inventory[key].timesEmptied} раз)`, 'warning');
+        showToast(`Внимание! ${brand} ${code} закончился! (использован ${inventory[key].timesEmptied} раз)`, 'warning');
     }
 }
 
@@ -147,7 +149,7 @@ function useMarkers() {
 function addBulkSet() {
     const brand = document.getElementById('bulk-brand').value;
     const setIndex = parseInt(document.getElementById('bulk-set').value);
-    const quantity = parseInt(document.getElementById('bulk-quantity').value) || 1;
+    const quantity = 1;
     
     const sets = MARKER_SETS[brand] || [];
     if (isNaN(setIndex) || !sets[setIndex]) {
@@ -228,11 +230,40 @@ function quickUse(brand, code) {
     renderInventory();
     renderRecommendations();
     
+    // Каждое списание = использование
+    inventory[key].timesEmptied = (inventory[key].timesEmptied || 0) + 1;
+    saveData();
     if (inventory[key].quantity === 0) {
-        inventory[key].timesEmptied = (inventory[key].timesEmptied || 0) + 1;
-        saveData();
-        showToast(`Внимание! ${brand} ${code} закончился! (заканчивался ${inventory[key].timesEmptied} раз)`, 'warning');
+        showToast(`Внимание! ${brand} ${code} закончился! (использован ${inventory[key].timesEmptied} раз)`, 'warning');
     }
+}
+
+// Удаление маркера из инвентаря
+function deleteMarker(brand, code) {
+    const key = `${brand}_${code}`;
+    if (!inventory[key]) {
+        showToast('Маркер не найден', 'error');
+        return;
+    }
+    
+    if (!confirm(`Удалить маркер ${brand} ${code} из инвентаря?\n\nЭто действие нельзя отменить.`)) {
+        return;
+    }
+    
+    delete inventory[key];
+    
+    history.push({
+        date: new Date().toISOString(),
+        action: 'delete',
+        brand,
+        code,
+        quantity: 0
+    });
+    
+    saveData();
+    renderInventory();
+    renderRecommendations();
+    showToast(`Маркер ${brand} ${code} удалён`, 'success');
 }
 
 // ==================== АНАЛОГИ И СТАТУСЫ ====================
@@ -383,7 +414,7 @@ function renderInventory() {
         // Формируем иконки
         let codeIcons = '';
         if (isFrequentlyEmpty) {
-            codeIcons += ` <span class="icon-frequently-empty" title="Заканчивался ${timesEmptied} раз">⚠️</span>`;
+            codeIcons += ` <span class="icon-frequently-empty" title="Использован ${timesEmptied} раз">⚠️</span>`;
         }
         
         let totalIcons = '';
@@ -397,7 +428,7 @@ function renderInventory() {
             analoguesHtml = analogues.map(a => {
                 const aStatus = getStatus(a.quantity, a.brand, a.code);
                 const aStatusClass = `status-${aStatus}`;
-                return `<span class="badge ${getBadgeClass(a.brand)}" style="${getBadgeStyle(a.brand)} margin: 2px;">${escapeHtml(a.brand)} ${escapeHtml(a.code)}: <span class="${aStatusClass}">${a.quantity} шт.</span></span>`;
+                return `<span class="badge ${getBadgeClass(a.brand)}" style="${getBadgeStyle(a.brand)} margin: 2px;">${a.brand} ${a.code}: <span class="${aStatusClass}">${a.quantity} шт.</span></span>`;
             }).join(' ');
         } else {
             analoguesHtml = '<span class="text-disabled">—</span>';
@@ -405,20 +436,18 @@ function renderInventory() {
         
         // Стиль для ячейки "своих" — подсветка если 0
         const ownStyle = ownQty === 0 ? 'color: var(--color-danger);' : '';
-        const analoguesStyle = analoguesQty === 0 ? 'color: var(--color-text-disabled);' : '';
-        
         return `
             <tr>
                 <td>${getBadgeHtml(item.brand)}</td>
                 <td>${escapeHtml(item.code)}${codeIcons}</td>
                 <td>${analoguesHtml}</td>
                 <td style="${ownStyle}" class="editable-cell" ondblclick="startInlineEdit('${escapeHtml(item.brand)}', '${escapeHtml(item.code)}', this)" title="Дважды кликните для редактирования"><strong>${ownQty} шт.</strong></td>
-                <td style="${analoguesStyle}"><strong>${analoguesQty} шт.</strong></td>
                 <td><strong>${colorTotal} шт.</strong>${totalIcons}</td>
                 <td><span class="${statusClass}">${statusText}</span></td>
                 <td class="actions-cell">
                     <button class="btn-quick btn-quick-add" onclick="quickAdd('${escapeHtml(item.brand)}', '${escapeHtml(item.code)}')" title="Добавить 1 шт.">＋</button>
                     <button class="btn-quick btn-quick-use" onclick="quickUse('${escapeHtml(item.brand)}', '${escapeHtml(item.code)}')" title="Списать 1 шт.">−</button>
+                    <button class="btn-quick btn-quick-delete" onclick="deleteMarker('${escapeHtml(item.brand)}', '${escapeHtml(item.code)}')" title="Удалить маркер">🗑</button>
                 </td>
             </tr>
         `;
@@ -618,14 +647,14 @@ function renderRecommendations() {
     if (frequentItems.length > 0) {
         html += `
             <div class="recommendation recommendation-frequent">
-                <h4>⚠️ Часто заканчиваются (${frequentItems.length} цветов)</h4>
-                <p>Эти маркеры заканчивались 2 и более раз — рекомендуется купить с запасом:</p>
+                <h4>⚠️ Часто используются (${frequentItems.length} цветов)</h4>
+                <p>Эти маркеры использовались 2 и более раз — рекомендуется купить с запасом:</p>
                 <ul style="margin-top: 8px; margin-left: 20px;">
                     ${frequentItems.map(item => {
                         const colorTotal = getColorTotal(item.brand, item.code);
                         const status = getStatus(item.quantity, item.brand, item.code);
                         const statusText = getStatusText(status);
-                        return `<li><strong>${escapeHtml(item.brand)} ${escapeHtml(item.code)}</strong> — заканчивался ${item.timesEmptied} раз (сейчас: ${item.quantity} шт., статус: ${statusText}, всего цвет: ${colorTotal} шт.)</li>`;
+                        return `<li><strong>${escapeHtml(item.brand)} ${escapeHtml(item.code)}</strong> — использован ${item.timesEmptied} раз (сейчас: ${item.quantity} шт., статус: ${statusText}, всего цвет: ${colorTotal} шт.)</li>`;
                     }).join('')}
                 </ul>
             </div>

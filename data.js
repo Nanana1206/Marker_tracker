@@ -321,7 +321,21 @@ const MARKER_SETS = {
         {
             name: "Grasp 120",
             count: 120,
-            codes: [] // Заглушка — состав пока неизвестен
+            codes: [
+                "B028","B117","B118","B119","B148","B153","B207","B215","B278","B688",
+                "B689","B690","B708","B778","B779","B780","B781","B782","B793","B815",
+                "BG148","BR756","BR762","BR763","BR764","F01","F04","F06","F07","F702",
+                "F703","F786","G147","G152","G154","G202","G227","G275","G277","G279",
+                "G281","G519","G687","G694","G695","G697","G699","G770","G772","G773",
+                "G774","G775","G776","G777","GY209","NG212","NG270","NG271","NG272","NG274",
+                "NG693","NG767","NG768","NG769","P207","R109","R128","R144","R146","R149",
+                "R150","R151","R158","R201","R211","R218","R238","R260","R269","R605",
+                "R691","R692","R698","R701","R704","R705","R707","R714","R754","R755",
+                "R757","R758","R759","R760","R761","R765","R766","R783","R784","R785",
+                "R787","R789","R790","R835","R848","S","W01","W706","Y123","Y128",
+                "Y145","Y146","Y206","Y208","Y209","Y210","Y276","Y416","Y713","Y762",
+                "Y771","Y788","Y791","Y792","Y906"
+            ]
         },
         {
             name: "Grasp 168 (165 цветов)",
@@ -402,21 +416,75 @@ function buildInitialInventory() {
 
 const INITIAL_INVENTORY = buildInitialInventory();
 
-// ==================== ФУНКЦИИ ИНИЦИАЛИЗАЦИИ ====================
+// ==================== ЗАКОНЧИВШИЕСЯ МАРКЕРЫ ====================
+// Маркеры, которые закончились (quantity будет установлен в 0)
+const EMPTY_MARKERS_LIST = {
+    "GuangNa": [
+        "786", "601", "821", "784", "680", "806", "687", "689", "779", "676",
+        "602", "697", "703", "654", "639", "650", "791", "869", "684", "600",
+        "785", "664", "768", "644", "781", "618"
+    ],
+    "Grasp": ["R755", "B117"],
+    "Languo": [
+        "GB404", "DS186", "CS509", "GR103", "BL208", "BL204", "LC199",
+        "BL205", "CS145", "GR109", "HC604", "CS506", "DS183", "PC806",
+        "PU306", "RY06", "CS504", "DS182", "BL209", "CS144"
+    ]
+};
 
-// Префикс ключей localStorage для изоляции данных
-const LS_PREFIX = 'mt_';
+// Построить EMPTY_MARKERS из списка
+function buildEmptyMarkers() {
+    const result = {};
+    for (const [brand, codes] of Object.entries(EMPTY_MARKERS_LIST)) {
+        for (const code of codes) {
+            result[`${brand}_${code}`] = { brand, code };
+        }
+    }
+    return result;
+}
+
+const EMPTY_MARKERS = buildEmptyMarkers();
+
+// ==================== ФУНКЦИИ ИНИЦИАЛИЗАЦИИ ====================
 
 // Функция для инициализации данных при первом запуске
 function initializeData() {
     // Проверяем, есть ли уже данные в localStorage
-    const existingData = localStorage.getItem(LS_PREFIX + 'inventory');
+    const existingData = localStorage.getItem('markerInventory');
     
     if (!existingData || existingData === '{}') {
-        // Если данных нет — начинаем с пустого инвентаря
-        console.log('Инициализация пустого инвентаря...');
+        // Если данных нет, загружаем начальные
+        console.log('Загрузка начальных данных о маркерах...');
         
-        localStorage.setItem(LS_PREFIX + 'inventory', JSON.stringify({}));
+        // Объединяем базовый и дополнительный наборы GuangNa
+        const mergedInventory = {};
+        
+        for (const [key, item] of Object.entries(INITIAL_INVENTORY)) {
+            const brandCode = `${item.brand}_${item.code}`;
+            
+            if (mergedInventory[brandCode]) {
+                // Если маркер уже есть, увеличиваем количество
+                mergedInventory[brandCode].quantity += item.quantity;
+            } else {
+                // Иначе создаем новую запись
+                mergedInventory[brandCode] = { ...item, timesEmptied: 0 };
+            }
+        }
+        
+        // Применяем закончившиеся маркеры (устанавливаем quantity = 0, timesEmptied = 1)
+        for (const [key, item] of Object.entries(EMPTY_MARKERS)) {
+            const brandCode = `${item.brand}_${item.code}`;
+            if (mergedInventory[brandCode]) {
+                mergedInventory[brandCode].quantity = 0;
+                mergedInventory[brandCode].timesEmptied = 1;
+            } else {
+                // Если маркера нет в инвентаре, добавляем с quantity = 0
+                mergedInventory[brandCode] = { brand: item.brand, code: item.code, quantity: 0, timesEmptied: 1 };
+            }
+        }
+        
+        // Сохраняем в localStorage
+        localStorage.setItem('markerInventory', JSON.stringify(mergedInventory));
         
         // Добавляем запись в историю
         const history = [{
@@ -424,13 +492,13 @@ function initializeData() {
             action: 'initial_load',
             brand: 'All',
             code: 'N/A',
-            quantity: 0,
-            description: 'Инициализация пустого инвентаря'
+            quantity: Object.keys(mergedInventory).length,
+            description: 'Загружены начальные данные о маркерах'
         }];
         
-        localStorage.setItem(LS_PREFIX + 'history', JSON.stringify(history));
+        localStorage.setItem('markerHistory', JSON.stringify(history));
         
-        console.log('Пустой инвентарь создан');
+        console.log(`Загружено ${Object.keys(mergedInventory).length} маркеров`);
         
         return true; // Данные были загружены
     }
@@ -438,9 +506,38 @@ function initializeData() {
     return false; // Данные уже существуют
 }
 
+// Функция для применения пустых маркеров (вызывается при каждом запуске)
+function applyEmptyMarkers() {
+    const data = localStorage.getItem('markerInventory');
+    if (!data || data === '{}') return;
+    
+    const inventory = JSON.parse(data);
+    let changed = false;
+    
+    for (const [key, item] of Object.entries(EMPTY_MARKERS)) {
+        const brandCode = `${item.brand}_${item.code}`;
+        if (inventory[brandCode] && inventory[brandCode].quantity > 0) {
+            inventory[brandCode].quantity = 0;
+            if (!inventory[brandCode].timesEmptied) {
+                inventory[brandCode].timesEmptied = 1;
+            }
+            changed = true;
+        } else if (inventory[brandCode] && !inventory[brandCode].timesEmptied) {
+            // Маркер уже 0, но нет счётчика — инициализируем
+            inventory[brandCode].timesEmptied = 1;
+            changed = true;
+        }
+    }
+    
+    if (changed) {
+        localStorage.setItem('markerInventory', JSON.stringify(inventory));
+        console.log('Применены пустые маркеры');
+    }
+}
+
 // Миграция: добавить timesEmptied к существующим маркерам, у которых его нет
 function migrateTimesEmptied() {
-    const data = localStorage.getItem(LS_PREFIX + 'inventory');
+    const data = localStorage.getItem('markerInventory');
     if (!data || data === '{}') return;
     
     const inventory = JSON.parse(data);
@@ -454,7 +551,7 @@ function migrateTimesEmptied() {
     }
     
     if (changed) {
-        localStorage.setItem(LS_PREFIX + 'inventory', JSON.stringify(inventory));
+        localStorage.setItem('markerInventory', JSON.stringify(inventory));
         console.log('Миграция timesEmptied выполнена');
     }
 }
